@@ -58,7 +58,27 @@ for root, _dirs, names in os.walk(app):
 print(f"scrubbed {total} occurrence(s) across {files} file(s)")
 PY
 
-# Verify: no residual home-path bytes anywhere in the bundle.
-residual=$(grep -rac "$HOME" "$APP" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
+# Verify: no residual home-path bytes anywhere in the bundle. Do not use grep's exit status
+# for this count: grep returns 1 when there are no matches, which is the successful case here
+# and would terminate this script under `set -euo pipefail`.
+residual=$(python3 - "$APP" "$HOME" <<'PY'
+import os
+import sys
+
+app, home = sys.argv[1], sys.argv[2].encode()
+total = 0
+for root, _dirs, names in os.walk(app):
+    for name in names:
+        path = os.path.join(root, name)
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as file:
+                total += file.read().count(home)
+        except OSError:
+            continue
+print(total)
+PY
+)
 echo "residual home-path hits: ${residual:-0}"
 [ "${residual:-0}" -eq 0 ] && echo "✓ clean" || { echo "✗ residual paths remain" >&2; exit 1; }
